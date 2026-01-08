@@ -133,14 +133,9 @@ class DataManager:
                 loaded = json.loads(json_str)
                 config.update(loaded)
                 
-                # Migração de estrutura antiga
-                if 'pesos' in config: 
-                    config['pesos_fornecedores'] = config.pop('pesos')
-                
-                # Garante que chaves existam
-                for k in ['pesos_fornecedores', 'pesos_produtos']:
-                    if k not in config: config[k] = DEFAULT_CONFIG[k]
-                    
+                # Garante chaves essenciais
+                if 'pesos_fornecedores' not in config: config['pesos_fornecedores'] = DEFAULT_CONFIG['pesos_fornecedores']
+                if 'pesos_produtos' not in config: config['pesos_produtos'] = DEFAULT_CONFIG['pesos_produtos']
                 return config
         except:
             pass
@@ -187,9 +182,9 @@ class DataManager:
             self.df_aval_prod['Score Final'] = self.df_aval_prod.apply(lambda row: self.calcular_nota(row, 'produto'), axis=1)
 
 # ==============================================================================
-# 4. FUNÇÃO DE PLOTAGEM (DASHBOARD CORRIGIDO)
+# 4. FUNÇÃO DE PLOTAGEM (DASHBOARD COMPLETO COM EVOLUÇÃO)
 # ==============================================================================
-def plot_dashboard(df_aval, df_cad, criterios, tipo_label):
+def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     if df_aval.empty or df_cad.empty:
         st.info(f"Sem dados de {tipo_label} para exibir. Cadastre e avalie itens primeiro.")
         return
@@ -243,38 +238,71 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label):
     st.subheader(f"🔍 Raio-X Individual: {tipo_label}")
     c_sel, c_rad = st.columns([1, 2])
     
+    nomes_disp = df_completo['Nome'].unique()
+    
     with c_sel:
-        nomes_disp = df_completo['Nome'].unique()
         # Chave única para o selectbox não conflitar
         sel_nome = st.selectbox(f"Selecione:", nomes_disp, key=f"sel_{tipo_label}_raio_x")
         
+        # Filtra dados do item selecionado
         df_item = df_completo[df_completo['Nome'] == sel_nome]
-        media_item = df_item['Score Final'].mean()
-        cat_item = df_item['Categoria'].iloc[0]
         
-        st.markdown(f"""
-        <div style="background-color: {COLOR_CARD_BG}; padding: 15px; border-radius: 5px; color: black; margin-top: 20px;">
-            <h3 style="color: black !important; margin:0;">{sel_nome}</h3>
-            <p style="color: black !important;"><b>Categoria:</b> {cat_item}</p>
-            <h1 style="color: {COLOR_PRIMARY} !important;">{media_item:.2f}</h1>
-        </div>
-        """, unsafe_allow_html=True)
+        # Proteção contra erro de índice se df_item estiver vazio
+        if not df_item.empty:
+            media_item = df_item['Score Final'].mean()
+            cat_item = df_item['Categoria'].iloc[0]
+            
+            st.markdown(f"""
+            <div style="background-color: {COLOR_CARD_BG}; padding: 15px; border-radius: 5px; color: black; margin-top: 20px;">
+                <h3 style="color: black !important; margin:0;">{sel_nome}</h3>
+                <p style="color: black !important;"><b>Categoria:</b> {cat_item}</p>
+                <h1 style="color: {COLOR_PRIMARY} !important;">{media_item:.2f}</h1>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.error("Erro ao carregar dados deste item.")
 
     with c_rad:
-        # Radar Individual
-        vals_item = df_item[criterios].mean().tolist()
-        vals_item += [vals_item[0]] # Fechar o ciclo
+        if not df_item.empty:
+            # Radar Individual
+            vals_item = df_item[criterios].mean().tolist()
+            vals_item += [vals_item[0]] # Fechar o ciclo
+            
+            # Média da Categoria
+            df_cat = df_completo[df_completo['Categoria'] == cat_item]
+            vals_cat = df_cat[criterios].mean().tolist()
+            vals_cat += [vals_cat[0]] # Fechar o ciclo
+            
+            fig_r = go.Figure()
+            fig_r.add_trace(go.Scatterpolar(r=vals_item, theta=criterios + [criterios[0]], fill='toself', name=sel_nome))
+            fig_r.add_trace(go.Scatterpolar(r=vals_cat, theta=criterios + [criterios[0]], name=f'Média {cat_item}', line=dict(dash='dot')))
+            fig_r.update_layout(polar=dict(radialaxis=dict(range=[0, 5])), paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), legend=dict(orientation="h"))
+            st.plotly_chart(fig_r, use_container_width=True)
+
+    # --- EVOLUÇÃO HISTÓRICA (NOVO) ---
+    st.markdown("---")
+    st.subheader(f"📈 Evolução Temporal: {sel_nome}")
+    
+    # Filtra histórico apenas deste item
+    df_hist = df_valid[df_valid['Nome'] == sel_nome].copy()
+    
+    if len(df_hist) > 0:
+        # Ordenação temporal
+        periodos_ordem = manager.get_periodos()
+        # Cria mapa de ordem
+        map_p = {p: i for i, p in enumerate(periodos_ordem)}
+        df_hist['sort_idx'] = df_hist['Periodo'].map(map_p).fillna(0)
         
-        # Média da Categoria
-        df_cat = df_completo[df_completo['Categoria'] == cat_item]
-        vals_cat = df_cat[criterios].mean().tolist()
-        vals_cat += [vals_cat[0]] # Fechar o ciclo
+        df_hist = df_hist.sort_values(['Ano', 'sort_idx'])
+        df_hist['Timeline'] = df_hist['Periodo'].astype(str) + "/" + df_hist['Ano'].astype(str)
         
-        fig_r = go.Figure()
-        fig_r.add_trace(go.Scatterpolar(r=vals_item, theta=criterios + [criterios[0]], fill='toself', name=sel_nome))
-        fig_r.add_trace(go.Scatterpolar(r=vals_cat, theta=criterios + [criterios[0]], name=f'Média {cat_item}', line=dict(dash='dot')))
-        fig_r.update_layout(polar=dict(radialaxis=dict(range=[0, 5])), paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), legend=dict(orientation="h"))
-        st.plotly_chart(fig_r, use_container_width=True)
+        fig_line = px.line(df_hist, x='Timeline', y='Score Final', markers=True, title=f"Histórico de Notas")
+        fig_line.update_layout(yaxis=dict(range=[0, 10]), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
+        fig_line.update_traces(line_color='#00FF00', line_width=4, marker_size=10)
+        st.plotly_chart(fig_line, use_container_width=True)
+    else:
+        st.info("Sem histórico suficiente para gerar gráfico de evolução.")
+
 
 # ==============================================================================
 # 5. APP PRINCIPAL
@@ -307,7 +335,7 @@ if opcao == "Fornecedores":
     tab_dash, tab_cad = st.tabs(["📊 Dashboard", "➕ Cadastrar Fornecedor"])
     
     with tab_dash:
-        plot_dashboard(manager.df_aval_forn, manager.df_fornecedores, list(manager.config['pesos_fornecedores'].keys()), "Fornecedores")
+        plot_dashboard(manager.df_aval_forn, manager.df_fornecedores, list(manager.config['pesos_fornecedores'].keys()), "Fornecedores", manager)
         
     with tab_cad:
         with st.form("cad_forn"):
@@ -331,7 +359,7 @@ elif opcao == "Produtos":
     tab_dash, tab_cad = st.tabs(["📊 Dashboard", "➕ Cadastrar Produto"])
     
     with tab_dash:
-        plot_dashboard(manager.df_aval_prod, manager.df_produtos, list(manager.config['pesos_produtos'].keys()), "Produtos")
+        plot_dashboard(manager.df_aval_prod, manager.df_produtos, list(manager.config['pesos_produtos'].keys()), "Produtos", manager)
         
     with tab_cad:
         with st.form("cad_prod"):
@@ -422,7 +450,7 @@ elif opcao == "Relatórios":
             filtrado = df_dados[(df_dados['Nome'] == sel_nome) & (df_dados['Ano'] == sel_ano)]
             st.dataframe(filtrado, use_container_width=True)
 
-# --- 5. BASE DE DADOS (CORRIGIDA) ---
+# --- 5. BASE DE DADOS (VISUAL CORRIGIDO) ---
 elif opcao == "Base de Dados":
     st.title("📂 Dados Brutos")
     
@@ -432,7 +460,7 @@ elif opcao == "Base de Dados":
 
     # Área de Importação (Expandida e corrigida)
     st.markdown("---")
-    with st.expander("📤 Importar CSV (Migração)", expanded=False):
+    with st.expander("📤 Importar CSV"):
         st.warning("Dados importados serão anexados ao final da tabela existente.")
         destino = st.radio("Destino:", 
                            ["Fornecedores", "Avaliações Fornecedores", "Produtos", "Avaliações Produtos"], horizontal=True)
