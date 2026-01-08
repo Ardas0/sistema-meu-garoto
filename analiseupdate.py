@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import json
 import numpy as np
 import time
+import copy # Importante para a fusão inteligente de configurações
 from streamlit_option_menu import option_menu
 from streamlit_gsheets import GSheetsConnection
 
@@ -31,6 +32,7 @@ DEFAULT_CONFIG = {
         'Preço': 1.0, 'Pagamento': 1.0, 'Suporte': 1.0, 'Comunicação': 1.0
     },
     'pesos_produtos': {
+        'Rentabilidade': 1.0, # <--- NOVO CRITÉRIO ADICIONADO
         'Qualidade Material': 1.0, 'Custo-Benefício': 1.0,
         'Durabilidade': 1.0, 'Acabamento': 1.0, 'Disponibilidade': 1.0,
         'Inovação': 1.0, 'Embalagem': 1.0, 'Sustentabilidade': 1.0
@@ -115,7 +117,7 @@ class DataManager:
             self.df_aval_forn = pd.DataFrame()
             self.df_produtos = pd.DataFrame()
             self.df_aval_prod = pd.DataFrame()
-            self.config = DEFAULT_CONFIG.copy()
+            self.config = copy.deepcopy(DEFAULT_CONFIG)
         
     def _get_cols_aval(self, tipo):
         key = 'pesos_fornecedores' if tipo == 'fornecedores' else 'pesos_produtos'
@@ -138,16 +140,26 @@ class DataManager:
             df = self.conn.read(worksheet="config", ttl=0)
             if not df.empty and 'JSON_DUMP' in df.columns:
                 json_str = df.iloc[0]['JSON_DUMP']
-                config = DEFAULT_CONFIG.copy()
                 loaded = json.loads(json_str)
-                config.update(loaded)
                 
-                if 'pesos_fornecedores' not in config: config['pesos_fornecedores'] = DEFAULT_CONFIG['pesos_fornecedores']
-                if 'pesos_produtos' not in config: config['pesos_produtos'] = DEFAULT_CONFIG['pesos_produtos']
+                # FUSÃO INTELIGENTE: Começa com o padrão (que tem Rentabilidade)
+                config = copy.deepcopy(DEFAULT_CONFIG)
+                
+                # Atualiza campos simples
+                for k, v in loaded.items():
+                    if k not in ['pesos_fornecedores', 'pesos_produtos']:
+                        config[k] = v
+                
+                # Atualiza pesos preservando novos campos do Default
+                if 'pesos_fornecedores' in loaded:
+                    config['pesos_fornecedores'].update(loaded['pesos_fornecedores'])
+                if 'pesos_produtos' in loaded:
+                    config['pesos_produtos'].update(loaded['pesos_produtos'])
+                    
                 return config
         except:
             pass
-        return DEFAULT_CONFIG.copy()
+        return copy.deepcopy(DEFAULT_CONFIG)
 
     def save_all(self):
         try:
@@ -189,14 +201,13 @@ class DataManager:
             self.df_aval_prod['Score Final'] = self.df_aval_prod.apply(lambda row: self.calcular_nota(row, 'produto'), axis=1)
 
 # ==============================================================================
-# 4. DASHBOARD (COM COMPARAÇÃO DE CATEGORIA)
+# 4. DASHBOARD
 # ==============================================================================
 def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     if df_aval.empty or df_cad.empty:
         st.info(f"Sem dados de {tipo_label} para exibir. Cadastre e avalie itens primeiro.")
         return
 
-    # Limpeza e Tratamento
     cols_to_keep = [c for c in df_aval.columns if c != 'Categoria']
     df_aval_clean = df_aval[cols_to_keep].copy()
     
@@ -207,7 +218,6 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
         if c in df_valid.columns:
             df_valid[c] = pd.to_numeric(df_valid[c], errors='coerce').fillna(0)
     
-    # O df_completo contém o histórico de avaliações E a categoria
     df_completo = pd.merge(df_valid, df_cad[['Nome', 'Categoria']], on="Nome", how="inner")
     
     if df_completo.empty:
@@ -251,7 +261,6 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     
     with c_sel:
         sel_nome = st.selectbox(f"Selecione:", nomes_disp, key=f"sel_{tipo_label}_raio_x")
-        # Pega todas as avaliações deste item para cálculo de média
         df_item = df_completo[df_completo['Nome'] == sel_nome]
         
         if not df_item.empty:
@@ -292,25 +301,22 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
             fig_r.update_layout(polar=dict(radialaxis=dict(range=[0, 10])), paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), legend=dict(orientation="h"))
             st.plotly_chart(fig_r, use_container_width=True)
 
-    # --- EVOLUÇÃO TEMPORAL (COM MODO DE COMPARAÇÃO) ---
+    # --- EVOLUÇÃO TEMPORAL ---
     st.markdown("---")
     st.subheader(f"📈 Evolução Temporal")
     
-    # Seletor de Modo
     tipo_evolucao = st.radio("Modo de Visualização:", ["Individual", "Comparar com Categoria"], horizontal=True, key=f"rad_ev_{tipo_label}")
     
     if not df_item.empty:
         cat_atual = df_item['Categoria'].iloc[0]
         
-        # Filtra os dados baseados na escolha
         if tipo_evolucao == "Individual":
-            df_chart = df_item.copy() # Apenas o item selecionado
+            df_chart = df_item.copy()
             color_arg = None
             title_txt = f"Histórico de Notas: {sel_nome}"
         else:
-            # Pega todos os itens da mesma categoria
             df_chart = df_completo[df_completo['Categoria'] == cat_atual].copy()
-            color_arg = 'Nome' # Colore linhas diferentes para cada produto/fornecedor
+            color_arg = 'Nome'
             title_txt = f"Comparativo - Categoria: {cat_atual}"
 
         if len(df_chart) > 0:
@@ -322,15 +328,13 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
             
             fig_line = px.line(df_chart, x='Timeline', y='Score Final', color=color_arg, markers=True, title=title_txt)
             fig_line.update_layout(yaxis=dict(range=[0, 10]), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
-            
             if tipo_evolucao == "Individual":
                 fig_line.update_traces(line_color='#00FF00', line_width=4, marker_size=10)
-                
             st.plotly_chart(fig_line, use_container_width=True)
         else:
             st.info("Sem histórico suficiente.")
     else:
-        st.info("Selecione um item acima para ver a evolução.")
+        st.info("Selecione um item acima.")
 
 # ==============================================================================
 # 5. APP PRINCIPAL
@@ -433,7 +437,6 @@ elif opcao == "Avaliação Unificada":
             cols = st.columns(2)
             inpts = {}
             for i, crit in enumerate(criterios.keys()):
-                # AJUSTE DE ESCALA: 0 a 10 (era 0 a 5)
                 inpts[crit] = cols[i%2].slider(crit, 0.0, 10.0, defaults[crit], 0.5)
             
             if st.form_submit_button("Salvar Avaliação"):
