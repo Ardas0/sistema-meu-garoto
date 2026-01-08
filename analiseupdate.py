@@ -47,12 +47,12 @@ CATEGORIAS_PROD = ["Vinhos", "Cachaça", "Licor", "Embalagens", "Vestuário", "D
 st.set_page_config(page_title="Meu Garoto - Supply Chain", layout="wide", page_icon="🍷")
 
 # ==============================================================================
-# 2. ESTILOS (CSS CORRIGIDO)
+# 2. ESTILOS (CSS AJUSTADO PARA CORRIGIR TEXTO BRANCO)
 # ==============================================================================
 
 st.markdown(f"""
 <style>
-    /* Aplica fonte apenas em elementos de texto, protegendo ícones */
+    /* Fonte Global */
     .stApp, .stMarkdown, h1, h2, h3, h4, p, label, .stButton, .stSelectbox, .stTextInput {{
         font-family: 'Times New Roman', serif !important;
     }}
@@ -60,15 +60,19 @@ st.markdown(f"""
     .stApp {{ background-color: {COLOR_BG}; }}
     [data-testid="stSidebar"] {{ background-color: {COLOR_SIDEBAR}; }}
     
+    /* Textos gerais brancos */
     .stMarkdown p, .stMarkdown label, h1, h2, h3 {{ color: {COLOR_TEXT_WHITE} !important; }}
     
+    /* KPI Cards e Áreas Claras - Força texto preto */
     .kpi-card {{
         background-color: {COLOR_CARD_BG};
         border-radius: 8px; padding: 15px;
         box-shadow: 2px 2px 5px rgba(0,0,0,0.3); margin-bottom: 10px;
         color: {COLOR_TEXT_BLACK} !important;
     }}
-    .kpi-card div, .kpi-card h2, .kpi-card span {{ color: {COLOR_TEXT_BLACK} !important; }}
+    .kpi-card div, .kpi-card h2, .kpi-card span, .kpi-card p, .kpi-card h1, .kpi-card h3 {{ 
+        color: {COLOR_TEXT_BLACK} !important; 
+    }}
 
     .stButton>button {{
         background-color: {COLOR_PRIMARY}; color: white !important;
@@ -83,9 +87,9 @@ st.markdown(f"""
 def make_card_html(label, value, desc, color_border):
     return f"""
     <div class="kpi-card" style="border-left: 5px solid {color_border};">
-        <div style="font-size: 14px; font-weight: bold; text-transform: uppercase;">{label}</div>
+        <div style="font-size: 14px; font-weight: bold; text-transform: uppercase; color: black !important;">{label}</div>
         <div style="font-size: 32px; font-weight: 800; color: {color_border} !important;">{value}</div>
-        <div style="font-size: 12px; font-style: italic;">{desc}</div>
+        <div style="font-size: 12px; font-style: italic; color: black !important;">{desc}</div>
     </div>
     """
 
@@ -155,7 +159,6 @@ class DataManager:
             config_str = json.dumps(self.config, ensure_ascii=False)
             df_conf = pd.DataFrame([{'JSON_DUMP': config_str}])
             self.conn.update(worksheet="config", data=df_conf)
-            
             st.cache_data.clear()
             return True
         except Exception as e:
@@ -186,27 +189,24 @@ class DataManager:
             self.df_aval_prod['Score Final'] = self.df_aval_prod.apply(lambda row: self.calcular_nota(row, 'produto'), axis=1)
 
 # ==============================================================================
-# 4. DASHBOARD (CORRIGIDO MERGE E GRÁFICOS)
+# 4. DASHBOARD (CORRIGIDO VISUAL E STATUS)
 # ==============================================================================
 def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     if df_aval.empty or df_cad.empty:
         st.info(f"Sem dados de {tipo_label} para exibir. Cadastre e avalie itens primeiro.")
         return
 
-    # 1. Tratamento e Limpeza
-    # Remove coluna 'Categoria' do df_aval se existir, para evitar conflito com df_cad
+    # Limpeza e Tratamento
     cols_to_keep = [c for c in df_aval.columns if c != 'Categoria']
     df_aval_clean = df_aval[cols_to_keep].copy()
     
     df_aval_clean['Score Final'] = pd.to_numeric(df_aval_clean['Score Final'], errors='coerce')
     df_valid = df_aval_clean.dropna(subset=['Score Final']).copy()
     
-    # Converte critérios para numérico
     for c in criterios:
         if c in df_valid.columns:
             df_valid[c] = pd.to_numeric(df_valid[c], errors='coerce').fillna(0)
     
-    # 2. Merge Seguro (Agora df_valid não tem Categoria, então só vem do cadastro)
     df_completo = pd.merge(df_valid, df_cad[['Nome', 'Categoria']], on="Nome", how="inner")
     
     if df_completo.empty:
@@ -223,7 +223,7 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     c3.markdown(make_card_html("Destaque", f"{melhor['Score Final']:.2f}", melhor['Nome'], COLOR_HIGHLIGHT), unsafe_allow_html=True)
     c4.markdown(make_card_html("Atenção", f"{pior['Score Final']:.2f}", pior['Nome'], COLOR_DANGER), unsafe_allow_html=True)
 
-    # Gráficos Gerais
+    # Gráficos
     col1, col2 = st.columns([3, 2])
     with col1:
         st.subheader("🏆 Ranking Geral")
@@ -234,15 +234,16 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
         st.plotly_chart(fig_bar, use_container_width=True)
     
     with col2:
-        st.subheader("🕸️ Radar Global")
+        st.subheader("🕸️ Radar Global (Médias)")
         medias = df_completo[criterios].mean().tolist()
+        # Ajuste de Escala para 0-10
         fig_avg = go.Figure(go.Scatterpolar(r=medias + [medias[0]], theta=criterios + [criterios[0]], fill='toself'))
-        fig_avg.update_layout(polar=dict(radialaxis=dict(range=[0, 5], visible=True)), paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
+        fig_avg.update_layout(polar=dict(radialaxis=dict(range=[0, 10], visible=True)), paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
         st.plotly_chart(fig_avg, use_container_width=True)
 
     st.markdown("---")
     
-    # --- RAIO X (CORRIGIDO) ---
+    # --- RAIO X (CORRIGIDO: TEXTO PRETO + STATUS) ---
     st.subheader(f"🔍 Raio-X Individual: {tipo_label}")
     c_sel, c_rad = st.columns([1, 2])
     
@@ -254,16 +255,27 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
         
         if not df_item.empty:
             media_item = df_item['Score Final'].mean()
-            # Agora 'Categoria' existe garantidamente
             cat_item = df_item['Categoria'].iloc[0]
             
+            # Box com estilo explícito de cor preta
             st.markdown(f"""
-            <div style="background-color: {COLOR_CARD_BG}; padding: 15px; border-radius: 5px; color: black; margin-top: 20px;">
-                <h3 style="color: black !important; margin:0;">{sel_nome}</h3>
-                <p style="color: black !important;"><b>Categoria:</b> {cat_item}</p>
-                <h1 style="color: {COLOR_PRIMARY} !important;">{media_item:.2f}</h1>
+            <div class="kpi-card" style="background-color: {COLOR_CARD_BG}; padding: 20px; border-radius: 10px; border: 1px solid #ddd;">
+                <h3 style="color: black !important; margin: 0 0 10px 0;">{sel_nome}</h3>
+                <p style="color: black !important; font-size: 16px;"><b>Categoria:</b> {cat_item}</p>
+                <div style="font-size: 48px; font-weight: bold; color: {COLOR_PRIMARY} !important;">{media_item:.2f}</div>
             </div>
             """, unsafe_allow_html=True)
+            
+            # --- STATUS VOLTOU AQUI ---
+            st.markdown("#### Status:")
+            if media_item >= 7.5:
+                st.success("✅ **APROVADO / EXCELENTE**")
+            elif media_item >= 6.0:
+                st.warning("⚠️ **EM OBSERVAÇÃO**")
+            else:
+                st.error("🚨 **RISCO / REVER CONTRATO**")
+            # --------------------------
+            
         else:
             st.error("Erro ao carregar dados.")
 
@@ -279,7 +291,8 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
             fig_r = go.Figure()
             fig_r.add_trace(go.Scatterpolar(r=vals_item, theta=criterios + [criterios[0]], fill='toself', name=sel_nome))
             fig_r.add_trace(go.Scatterpolar(r=vals_cat, theta=criterios + [criterios[0]], name=f'Média {cat_item}', line=dict(dash='dot')))
-            fig_r.update_layout(polar=dict(radialaxis=dict(range=[0, 5])), paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), legend=dict(orientation="h"))
+            # Ajuste de Escala para 0-10 aqui também
+            fig_r.update_layout(polar=dict(radialaxis=dict(range=[0, 10])), paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), legend=dict(orientation="h"))
             st.plotly_chart(fig_r, use_container_width=True)
 
     # --- EVOLUÇÃO ---
@@ -287,16 +300,14 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     st.subheader(f"📈 Evolução Temporal: {sel_nome}")
     
     df_hist = df_valid[df_valid['Nome'] == sel_nome].copy()
-    
     if len(df_hist) > 0:
         periodos_ordem = manager.get_periodos()
         map_p = {p: i for i, p in enumerate(periodos_ordem)}
         df_hist['sort_idx'] = df_hist['Periodo'].map(map_p).fillna(0)
-        
         df_hist = df_hist.sort_values(['Ano', 'sort_idx'])
         df_hist['Timeline'] = df_hist['Periodo'].astype(str) + "/" + df_hist['Ano'].astype(str)
         
-        fig_line = px.line(df_hist, x='Timeline', y='Score Final', markers=True, title=f"Histórico de Notas")
+        fig_line = px.line(df_hist, x='Timeline', y='Score Final', markers=True)
         fig_line.update_layout(yaxis=dict(range=[0, 10]), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
         fig_line.update_traces(line_color='#00FF00', line_width=4, marker_size=10)
         st.plotly_chart(fig_line, use_container_width=True)
@@ -404,7 +415,8 @@ elif opcao == "Avaliação Unificada":
             cols = st.columns(2)
             inpts = {}
             for i, crit in enumerate(criterios.keys()):
-                inpts[crit] = cols[i%2].slider(crit, 0.0, 5.0, defaults[crit], 0.5)
+                # AJUSTE DE ESCALA: 0 a 10 (era 0 a 5)
+                inpts[crit] = cols[i%2].slider(crit, 0.0, 10.0, defaults[crit], 0.5)
             
             if st.form_submit_button("Salvar Avaliação"):
                 nota = manager.calcular_nota(inpts, chave_tipo)
