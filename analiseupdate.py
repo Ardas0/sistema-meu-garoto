@@ -23,7 +23,7 @@ COLOR_CARD_BG = "#FFFAFA"
 COLOR_DANGER = "#B22222"
 COLOR_HIGHLIGHT = "#006400"
 
-# Configuração Base (Esqueleto)
+# Configuração Base
 DEFAULT_CONFIG = {
     'pesos_fornecedores': {
         'Conformidade Técnica': 1.0, 'Durabilidade': 1.0,
@@ -41,20 +41,25 @@ DEFAULT_CONFIG = {
 }
 
 CATEGORIAS_FORN = ["Matéria Prima", "Embalagens", "Logística", "Manutenção", "Serviços", "Outros"]
-CATEGORIAS_PROD = ["Vinho Tinto", "Vinho Branco", "Espumante", "Suco de Uva", "Kit Presente", "Outros"]
+CATEGORIAS_PROD = ["Vinhos", "Cachaça", "Licor", "Embalagens", "Vestuário", "Doces", "Outros"]
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Meu Garoto - Supply Chain", layout="wide", page_icon="🍷")
 
 # ==============================================================================
-# 2. ESTILOS (CSS)
+# 2. ESTILOS (CSS CORRIGIDO)
 # ==============================================================================
 
 st.markdown(f"""
 <style>
+    /* Aplica fonte apenas em elementos de texto, protegendo ícones */
+    .stApp, .stMarkdown, h1, h2, h3, h4, p, label, .stButton, .stSelectbox, .stTextInput {{
+        font-family: 'Times New Roman', serif !important;
+    }}
+    
     .stApp {{ background-color: {COLOR_BG}; }}
     [data-testid="stSidebar"] {{ background-color: {COLOR_SIDEBAR}; }}
-    h1, h2, h3, h4, p, label, span, div {{ font-family: 'Times New Roman', serif !important; }}
+    
     .stMarkdown p, .stMarkdown label, h1, h2, h3 {{ color: {COLOR_TEXT_WHITE} !important; }}
     
     .kpi-card {{
@@ -133,7 +138,6 @@ class DataManager:
                 loaded = json.loads(json_str)
                 config.update(loaded)
                 
-                # Garante chaves essenciais
                 if 'pesos_fornecedores' not in config: config['pesos_fornecedores'] = DEFAULT_CONFIG['pesos_fornecedores']
                 if 'pesos_produtos' not in config: config['pesos_produtos'] = DEFAULT_CONFIG['pesos_produtos']
                 return config
@@ -182,23 +186,27 @@ class DataManager:
             self.df_aval_prod['Score Final'] = self.df_aval_prod.apply(lambda row: self.calcular_nota(row, 'produto'), axis=1)
 
 # ==============================================================================
-# 4. FUNÇÃO DE PLOTAGEM (DASHBOARD COMPLETO COM EVOLUÇÃO)
+# 4. DASHBOARD (CORRIGIDO MERGE E GRÁFICOS)
 # ==============================================================================
 def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     if df_aval.empty or df_cad.empty:
         st.info(f"Sem dados de {tipo_label} para exibir. Cadastre e avalie itens primeiro.")
         return
 
-    # Limpeza de dados
-    df_aval['Score Final'] = pd.to_numeric(df_aval['Score Final'], errors='coerce')
-    df_valid = df_aval.dropna(subset=['Score Final']).copy()
+    # 1. Tratamento e Limpeza
+    # Remove coluna 'Categoria' do df_aval se existir, para evitar conflito com df_cad
+    cols_to_keep = [c for c in df_aval.columns if c != 'Categoria']
+    df_aval_clean = df_aval[cols_to_keep].copy()
+    
+    df_aval_clean['Score Final'] = pd.to_numeric(df_aval_clean['Score Final'], errors='coerce')
+    df_valid = df_aval_clean.dropna(subset=['Score Final']).copy()
     
     # Converte critérios para numérico
     for c in criterios:
         if c in df_valid.columns:
             df_valid[c] = pd.to_numeric(df_valid[c], errors='coerce').fillna(0)
     
-    # Merge
+    # 2. Merge Seguro (Agora df_valid não tem Categoria, então só vem do cadastro)
     df_completo = pd.merge(df_valid, df_cad[['Nome', 'Categoria']], on="Nome", how="inner")
     
     if df_completo.empty:
@@ -215,7 +223,7 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     c3.markdown(make_card_html("Destaque", f"{melhor['Score Final']:.2f}", melhor['Nome'], COLOR_HIGHLIGHT), unsafe_allow_html=True)
     c4.markdown(make_card_html("Atenção", f"{pior['Score Final']:.2f}", pior['Nome'], COLOR_DANGER), unsafe_allow_html=True)
 
-    # Ranking e Radar Global
+    # Gráficos Gerais
     col1, col2 = st.columns([3, 2])
     with col1:
         st.subheader("🏆 Ranking Geral")
@@ -241,15 +249,12 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     nomes_disp = df_completo['Nome'].unique()
     
     with c_sel:
-        # Chave única para o selectbox não conflitar
         sel_nome = st.selectbox(f"Selecione:", nomes_disp, key=f"sel_{tipo_label}_raio_x")
-        
-        # Filtra dados do item selecionado
         df_item = df_completo[df_completo['Nome'] == sel_nome]
         
-        # Proteção contra erro de índice se df_item estiver vazio
         if not df_item.empty:
             media_item = df_item['Score Final'].mean()
+            # Agora 'Categoria' existe garantidamente
             cat_item = df_item['Categoria'].iloc[0]
             
             st.markdown(f"""
@@ -260,18 +265,16 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.error("Erro ao carregar dados deste item.")
+            st.error("Erro ao carregar dados.")
 
     with c_rad:
         if not df_item.empty:
-            # Radar Individual
             vals_item = df_item[criterios].mean().tolist()
-            vals_item += [vals_item[0]] # Fechar o ciclo
+            vals_item += [vals_item[0]]
             
-            # Média da Categoria
             df_cat = df_completo[df_completo['Categoria'] == cat_item]
             vals_cat = df_cat[criterios].mean().tolist()
-            vals_cat += [vals_cat[0]] # Fechar o ciclo
+            vals_cat += [vals_cat[0]]
             
             fig_r = go.Figure()
             fig_r.add_trace(go.Scatterpolar(r=vals_item, theta=criterios + [criterios[0]], fill='toself', name=sel_nome))
@@ -279,17 +282,14 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
             fig_r.update_layout(polar=dict(radialaxis=dict(range=[0, 5])), paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), legend=dict(orientation="h"))
             st.plotly_chart(fig_r, use_container_width=True)
 
-    # --- EVOLUÇÃO HISTÓRICA (NOVO) ---
+    # --- EVOLUÇÃO ---
     st.markdown("---")
     st.subheader(f"📈 Evolução Temporal: {sel_nome}")
     
-    # Filtra histórico apenas deste item
     df_hist = df_valid[df_valid['Nome'] == sel_nome].copy()
     
     if len(df_hist) > 0:
-        # Ordenação temporal
         periodos_ordem = manager.get_periodos()
-        # Cria mapa de ordem
         map_p = {p: i for i, p in enumerate(periodos_ordem)}
         df_hist['sort_idx'] = df_hist['Periodo'].map(map_p).fillna(0)
         
@@ -301,8 +301,7 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
         fig_line.update_traces(line_color='#00FF00', line_width=4, marker_size=10)
         st.plotly_chart(fig_line, use_container_width=True)
     else:
-        st.info("Sem histórico suficiente para gerar gráfico de evolução.")
-
+        st.info("Sem histórico suficiente.")
 
 # ==============================================================================
 # 5. APP PRINCIPAL
@@ -313,7 +312,6 @@ if 'manager' not in st.session_state:
 
 manager = st.session_state['manager']
 
-# --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn.awsli.com.br/1964/1964962/logo/meu-garoto_marca-v-a-r-4qbs46wai7.png", use_container_width=True)
     st.markdown(f"<div style='text-align:center; background:{COLOR_PRIMARY}; padding:5px; border-radius:5px; color:white; font-weight:bold; margin-bottom:15px;'>Supply Chain Intelligence</div>", unsafe_allow_html=True)
@@ -329,14 +327,11 @@ with st.sidebar:
         }
     )
 
-# --- 1. FORNECEDORES ---
 if opcao == "Fornecedores":
     st.title("🚚 Gestão de Fornecedores")
     tab_dash, tab_cad = st.tabs(["📊 Dashboard", "➕ Cadastrar Fornecedor"])
-    
     with tab_dash:
         plot_dashboard(manager.df_aval_forn, manager.df_fornecedores, list(manager.config['pesos_fornecedores'].keys()), "Fornecedores", manager)
-        
     with tab_cad:
         with st.form("cad_forn"):
             c1, c2 = st.columns(2)
@@ -353,14 +348,11 @@ if opcao == "Fornecedores":
                 else:
                     st.error("Nome inválido ou já existente.")
 
-# --- 2. PRODUTOS ---
 elif opcao == "Produtos":
     st.title("📦 Gestão de Produtos")
     tab_dash, tab_cad = st.tabs(["📊 Dashboard", "➕ Cadastrar Produto"])
-    
     with tab_dash:
         plot_dashboard(manager.df_aval_prod, manager.df_produtos, list(manager.config['pesos_produtos'].keys()), "Produtos", manager)
-        
     with tab_cad:
         with st.form("cad_prod"):
             c1, c2 = st.columns(2)
@@ -377,7 +369,6 @@ elif opcao == "Produtos":
                 else:
                     st.error("Nome inválido ou já existente.")
 
-# --- 3. AVALIAÇÃO ---
 elif opcao == "Avaliação Unificada":
     st.title("📝 Central de Avaliação")
     tipo_aval = st.radio("O que você vai avaliar?", ["Fornecedor", "Produto"], horizontal=True)
@@ -420,20 +411,17 @@ elif opcao == "Avaliação Unificada":
                 nova = {'Nome': sel_item, 'Ano': sel_ano, 'Periodo': sel_per, 'Score Final': nota}
                 nova.update(inpts)
                 
-                # Remove antiga e add nova
                 df_hist = df_hist[~((df_hist['Nome'] == sel_item) & (df_hist['Ano'] == sel_ano) & (df_hist['Periodo'] == sel_per))]
                 df_hist = pd.concat([df_hist, pd.DataFrame([nova])], ignore_index=True)
                 
-                # Atualiza no manager
                 if tipo_aval == "Fornecedor": manager.df_aval_forn = df_hist
                 else: manager.df_aval_prod = df_hist
                 
                 manager.save_all()
-                st.success(f"Avaliação de {sel_item} salva! Nota: {nota:.2f}")
+                st.success(f"Avaliação salva! Nota: {nota:.2f}")
                 time.sleep(1)
                 st.rerun()
 
-# --- 4. RELATÓRIOS ---
 elif opcao == "Relatórios":
     st.title("📑 Relatórios")
     tipo_rep = st.radio("Tipo:", ["Fornecedor", "Produto"], horizontal=True)
@@ -450,15 +438,12 @@ elif opcao == "Relatórios":
             filtrado = df_dados[(df_dados['Nome'] == sel_nome) & (df_dados['Ano'] == sel_ano)]
             st.dataframe(filtrado, use_container_width=True)
 
-# --- 5. BASE DE DADOS (VISUAL CORRIGIDO) ---
 elif opcao == "Base de Dados":
     st.title("📂 Dados Brutos")
     
-    # Botão de salvar agora é limpo e funcional
     if st.button("☁️ Forçar Salvamento na Nuvem", type="primary"):
         if manager.save_all(): st.toast("Salvo com sucesso!", icon="☁️")
 
-    # Área de Importação (Expandida e corrigida)
     st.markdown("---")
     with st.expander("📤 Importar CSV"):
         st.warning("Dados importados serão anexados ao final da tabela existente.")
@@ -496,7 +481,6 @@ elif opcao == "Base de Dados":
     with t4:
         manager.df_aval_prod = st.data_editor(manager.df_aval_prod, num_rows="dynamic", use_container_width=True, key="edit_aval_prod")
 
-# --- 6. CONFIGURAÇÕES ---
 elif opcao == "Configurações":
     st.title("⚙️ Configurações do Sistema")
     
@@ -521,11 +505,9 @@ elif opcao == "Configurações":
     with t1:
         st.subheader("Critérios Fornecedores")
         render_weights_form('pesos_fornecedores', "Salvar Pesos Fornecedores", "forn")
-        
     with t2:
         st.subheader("Critérios Produtos")
         render_weights_form('pesos_produtos', "Salvar Pesos Produtos", "prod")
-        
     with t3:
         st.info("Configurações Gerais")
         atual = manager.config['tipo_periodo']
