@@ -47,7 +47,7 @@ CATEGORIAS_PROD = ["Vinhos", "Cachaça", "Licor", "Embalagens", "Vestuário", "D
 st.set_page_config(page_title="Meu Garoto - Supply Chain", layout="wide", page_icon="🍷")
 
 # ==============================================================================
-# 2. ESTILOS (CSS AJUSTADO PARA CORRIGIR TEXTO BRANCO)
+# 2. ESTILOS (CSS)
 # ==============================================================================
 
 st.markdown(f"""
@@ -189,7 +189,7 @@ class DataManager:
             self.df_aval_prod['Score Final'] = self.df_aval_prod.apply(lambda row: self.calcular_nota(row, 'produto'), axis=1)
 
 # ==============================================================================
-# 4. DASHBOARD (CORRIGIDO VISUAL E STATUS)
+# 4. DASHBOARD (COM COMPARAÇÃO DE CATEGORIA)
 # ==============================================================================
 def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     if df_aval.empty or df_cad.empty:
@@ -207,6 +207,7 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
         if c in df_valid.columns:
             df_valid[c] = pd.to_numeric(df_valid[c], errors='coerce').fillna(0)
     
+    # O df_completo contém o histórico de avaliações E a categoria
     df_completo = pd.merge(df_valid, df_cad[['Nome', 'Categoria']], on="Nome", how="inner")
     
     if df_completo.empty:
@@ -236,14 +237,13 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     with col2:
         st.subheader("🕸️ Radar Global (Médias)")
         medias = df_completo[criterios].mean().tolist()
-        # Ajuste de Escala para 0-10
         fig_avg = go.Figure(go.Scatterpolar(r=medias + [medias[0]], theta=criterios + [criterios[0]], fill='toself'))
         fig_avg.update_layout(polar=dict(radialaxis=dict(range=[0, 10], visible=True)), paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
         st.plotly_chart(fig_avg, use_container_width=True)
 
     st.markdown("---")
     
-    # --- RAIO X (CORRIGIDO: TEXTO PRETO + STATUS) ---
+    # --- RAIO X ---
     st.subheader(f"🔍 Raio-X Individual: {tipo_label}")
     c_sel, c_rad = st.columns([1, 2])
     
@@ -251,13 +251,13 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     
     with c_sel:
         sel_nome = st.selectbox(f"Selecione:", nomes_disp, key=f"sel_{tipo_label}_raio_x")
+        # Pega todas as avaliações deste item para cálculo de média
         df_item = df_completo[df_completo['Nome'] == sel_nome]
         
         if not df_item.empty:
             media_item = df_item['Score Final'].mean()
             cat_item = df_item['Categoria'].iloc[0]
             
-            # Box com estilo explícito de cor preta
             st.markdown(f"""
             <div class="kpi-card" style="background-color: {COLOR_CARD_BG}; padding: 20px; border-radius: 10px; border: 1px solid #ddd;">
                 <h3 style="color: black !important; margin: 0 0 10px 0;">{sel_nome}</h3>
@@ -266,7 +266,6 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
             </div>
             """, unsafe_allow_html=True)
             
-            # --- STATUS VOLTOU AQUI ---
             st.markdown("#### Status:")
             if media_item >= 7.5:
                 st.success("✅ **APROVADO / EXCELENTE**")
@@ -274,7 +273,6 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
                 st.warning("⚠️ **EM OBSERVAÇÃO**")
             else:
                 st.error("🚨 **RISCO / REVER CONTRATO**")
-            # --------------------------
             
         else:
             st.error("Erro ao carregar dados.")
@@ -291,28 +289,48 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
             fig_r = go.Figure()
             fig_r.add_trace(go.Scatterpolar(r=vals_item, theta=criterios + [criterios[0]], fill='toself', name=sel_nome))
             fig_r.add_trace(go.Scatterpolar(r=vals_cat, theta=criterios + [criterios[0]], name=f'Média {cat_item}', line=dict(dash='dot')))
-            # Ajuste de Escala para 0-10 aqui também
             fig_r.update_layout(polar=dict(radialaxis=dict(range=[0, 10])), paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), legend=dict(orientation="h"))
             st.plotly_chart(fig_r, use_container_width=True)
 
-    # --- EVOLUÇÃO ---
+    # --- EVOLUÇÃO TEMPORAL (COM MODO DE COMPARAÇÃO) ---
     st.markdown("---")
-    st.subheader(f"📈 Evolução Temporal: {sel_nome}")
+    st.subheader(f"📈 Evolução Temporal")
     
-    df_hist = df_valid[df_valid['Nome'] == sel_nome].copy()
-    if len(df_hist) > 0:
-        periodos_ordem = manager.get_periodos()
-        map_p = {p: i for i, p in enumerate(periodos_ordem)}
-        df_hist['sort_idx'] = df_hist['Periodo'].map(map_p).fillna(0)
-        df_hist = df_hist.sort_values(['Ano', 'sort_idx'])
-        df_hist['Timeline'] = df_hist['Periodo'].astype(str) + "/" + df_hist['Ano'].astype(str)
+    # Seletor de Modo
+    tipo_evolucao = st.radio("Modo de Visualização:", ["Individual", "Comparar com Categoria"], horizontal=True, key=f"rad_ev_{tipo_label}")
+    
+    if not df_item.empty:
+        cat_atual = df_item['Categoria'].iloc[0]
         
-        fig_line = px.line(df_hist, x='Timeline', y='Score Final', markers=True)
-        fig_line.update_layout(yaxis=dict(range=[0, 10]), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
-        fig_line.update_traces(line_color='#00FF00', line_width=4, marker_size=10)
-        st.plotly_chart(fig_line, use_container_width=True)
+        # Filtra os dados baseados na escolha
+        if tipo_evolucao == "Individual":
+            df_chart = df_item.copy() # Apenas o item selecionado
+            color_arg = None
+            title_txt = f"Histórico de Notas: {sel_nome}"
+        else:
+            # Pega todos os itens da mesma categoria
+            df_chart = df_completo[df_completo['Categoria'] == cat_atual].copy()
+            color_arg = 'Nome' # Colore linhas diferentes para cada produto/fornecedor
+            title_txt = f"Comparativo - Categoria: {cat_atual}"
+
+        if len(df_chart) > 0:
+            periodos_ordem = manager.get_periodos()
+            map_p = {p: i for i, p in enumerate(periodos_ordem)}
+            df_chart['sort_idx'] = df_chart['Periodo'].map(map_p).fillna(0)
+            df_chart = df_chart.sort_values(['Ano', 'sort_idx'])
+            df_chart['Timeline'] = df_chart['Periodo'].astype(str) + "/" + df_chart['Ano'].astype(str)
+            
+            fig_line = px.line(df_chart, x='Timeline', y='Score Final', color=color_arg, markers=True, title=title_txt)
+            fig_line.update_layout(yaxis=dict(range=[0, 10]), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
+            
+            if tipo_evolucao == "Individual":
+                fig_line.update_traces(line_color='#00FF00', line_width=4, marker_size=10)
+                
+            st.plotly_chart(fig_line, use_container_width=True)
+        else:
+            st.info("Sem histórico suficiente.")
     else:
-        st.info("Sem histórico suficiente.")
+        st.info("Selecione um item acima para ver a evolução.")
 
 # ==============================================================================
 # 5. APP PRINCIPAL
