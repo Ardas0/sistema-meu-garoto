@@ -23,7 +23,7 @@ COLOR_CARD_BG = "#FFFAFA"
 COLOR_DANGER = "#B22222"
 COLOR_HIGHLIGHT = "#006400"
 
-# Configuração Base (Esqueleto)
+# Configuração Base (Esqueleto para quando a planilha Config estiver vazia)
 DEFAULT_CONFIG = {
     'pesos_fornecedores': {
         'Conformidade Técnica': 1.0, 'Durabilidade': 1.0,
@@ -40,13 +40,8 @@ DEFAULT_CONFIG = {
     'autosave': True
 }
 
-CATEGORIAS_FORN = [
-    "Matéria Prima", "Embalagens", "Logística", "Manutenção", "Serviços", "Outros"
-]
-
-CATEGORIAS_PROD = [
-    "Vinho Tinto", "Vinho Branco", "Espumante", "Suco de Uva", "Kit Presente", "Outros"
-]
+CATEGORIAS_FORN = ["Matéria Prima", "Embalagens", "Logística", "Manutenção", "Serviços", "Outros"]
+CATEGORIAS_PROD = ["Vinho Tinto", "Vinho Branco", "Espumante", "Suco de Uva", "Kit Presente", "Outros"]
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Meu Garoto - Supply Chain", layout="wide", page_icon="🍷")
@@ -99,11 +94,9 @@ class DataManager:
             self.conn = st.connection("gsheets", type=GSheetsConnection)
             self.config = self._load_config()
             
-            # Carrega Fornecedores
             self.df_fornecedores = self._load_sheet("fornecedores", ['Nome', 'Categoria', 'Contato'])
             self.df_aval_forn = self._load_sheet("avaliacoes", self._get_cols_aval('fornecedores'))
             
-            # Carrega Produtos
             self.df_produtos = self._load_sheet("produtos", ['Nome', 'Categoria', 'Detalhes'])
             self.df_aval_prod = self._load_sheet("avaliacoes_produtos", self._get_cols_aval('produtos'))
             
@@ -117,7 +110,9 @@ class DataManager:
         
     def _get_cols_aval(self, tipo):
         key = 'pesos_fornecedores' if tipo == 'fornecedores' else 'pesos_produtos'
-        return ['Nome', 'Ano', 'Periodo', 'Score Final'] + list(self.config[key].keys())
+        # Garante que usamos as chaves do config, ou do default se o config estiver vazio
+        dict_pesos = self.config.get(key, DEFAULT_CONFIG[key])
+        return ['Nome', 'Ano', 'Periodo', 'Score Final'] + list(dict_pesos.keys())
 
     def _load_sheet(self, sheet_name, expected_cols):
         try:
@@ -138,9 +133,12 @@ class DataManager:
                 config = DEFAULT_CONFIG.copy()
                 loaded = json.loads(json_str)
                 config.update(loaded)
-                # Migração de estrutura antiga para nova se necessário
-                if 'pesos' in config: # Se for config antiga
+                # Garante estrutura correta caso venha de versão antiga
+                if 'pesos' in config: 
                     config['pesos_fornecedores'] = config.pop('pesos')
+                # Garante que as chaves de produtos existam
+                if 'pesos_produtos' not in config:
+                    config['pesos_produtos'] = DEFAULT_CONFIG['pesos_produtos']
                 return config
         except:
             pass
@@ -181,60 +179,118 @@ class DataManager:
         return ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 
     def recalcular_tudo(self):
-        # Recalcula Fornecedores
-        criterios_f = list(self.config['pesos_fornecedores'].keys())
         if not self.df_aval_forn.empty:
             self.df_aval_forn['Score Final'] = self.df_aval_forn.apply(lambda row: self.calcular_nota(row, 'fornecedor'), axis=1)
-        
-        # Recalcula Produtos
-        criterios_p = list(self.config['pesos_produtos'].keys())
         if not self.df_aval_prod.empty:
             self.df_aval_prod['Score Final'] = self.df_aval_prod.apply(lambda row: self.calcular_nota(row, 'produto'), axis=1)
 
 # ==============================================================================
-# 4. FUNÇÕES DE PLOTAGEM (REUTILIZÁVEIS)
+# 4. FUNÇÕES DE PLOTAGEM (DASHBOARD COMPLETO)
 # ==============================================================================
-def plot_dashboard(df_aval, df_cad, criterios, tipo_label):
+def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
     if df_aval.empty or df_cad.empty:
         st.info(f"Sem dados de {tipo_label} para exibir.")
         return
 
-    # Filtros e tratamento
+    # Tratamento de dados
     df_aval['Score Final'] = pd.to_numeric(df_aval['Score Final'], errors='coerce')
     df_aval = df_aval.dropna(subset=['Score Final'])
+    
+    # Conversão dos critérios para numérico
+    for c in criterios:
+        if c in df_aval.columns:
+            df_aval[c] = pd.to_numeric(df_aval[c], errors='coerce').fillna(0)
     
     # Merge com cadastro para pegar Categoria
     df_completo = pd.merge(df_aval, df_cad[['Nome', 'Categoria']], on="Nome", how="inner")
     
     if df_completo.empty:
-        st.warning("Nenhum item avaliado encontrado no cadastro.")
+        st.warning(f"Nenhum {tipo_label} avaliado encontrado no cadastro.")
         return
 
-    # Cards
+    # --- CARDS DE RESUMO ---
+    # Pegamos a média mais recente ou média geral (simplificado para média geral)
     melhor = df_completo.loc[df_completo['Score Final'].idxmax()]
     pior = df_completo.loc[df_completo['Score Final'].idxmin()]
     
     c1, c2, c3, c4 = st.columns(4)
     c1.markdown(make_card_html(f"Total {tipo_label}", f"{len(df_cad)}", "Cadastrados", COLOR_PRIMARY), unsafe_allow_html=True)
     c2.markdown(make_card_html("Média Geral", f"{df_completo['Score Final'].mean():.2f}", "Meta: > 7.5", COLOR_SECONDARY), unsafe_allow_html=True)
-    c3.markdown(make_card_html("Destaque", f"{melhor['Score Final']:.2f}", mejor_nome := melhor['Nome'], COLOR_HIGHLIGHT), unsafe_allow_html=True)
+    c3.markdown(make_card_html("Destaque", f"{melhor['Score Final']:.2f}", melhor['Nome'], COLOR_HIGHLIGHT), unsafe_allow_html=True)
     c4.markdown(make_card_html("Atenção", f"{pior['Score Final']:.2f}", pior['Nome'], COLOR_DANGER), unsafe_allow_html=True)
 
-    # Gráficos
+    # --- RANKING E RADAR GERAL ---
     col1, col2 = st.columns([3, 2])
     with col1:
-        st.subheader("🏆 Ranking")
-        fig_bar = px.bar(df_completo.sort_values('Score Final'), x='Score Final', y='Nome', orientation='h', 
+        st.subheader("🏆 Ranking Geral")
+        # Agrupa por nome para o ranking (média de todas as avaliações)
+        df_rank = df_completo.groupby('Nome', as_index=False)['Score Final'].mean().sort_values('Score Final')
+        fig_bar = px.bar(df_rank, x='Score Final', y='Nome', orientation='h', 
                          text_auto='.2f', color='Score Final', color_continuous_scale=[COLOR_DANGER, "#FFFF00", COLOR_PRIMARY])
-        fig_bar.update_layout(paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
+        fig_bar.update_layout(paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), xaxis=dict(range=[0, 10]))
         st.plotly_chart(fig_bar, use_container_width=True)
     
     with col2:
-        st.subheader("Radar de Qualidade")
+        st.subheader("🕸️ Radar de Qualidade (Média Global)")
         medias = df_completo[criterios].mean().tolist()
         fig_avg = go.Figure(go.Scatterpolar(r=medias + [medias[0]], theta=criterios + [criterios[0]], fill='toself'))
         fig_avg.update_layout(polar=dict(radialaxis=dict(range=[0, 5])), paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
         st.plotly_chart(fig_avg, use_container_width=True)
+
+    st.markdown("---")
+    
+    # --- RAIO X (INDIVIDUAL) ---
+    st.subheader(f"🔍 Raio-X do {tipo_label}")
+    c_sel, c_rad = st.columns([1, 2])
+    with c_sel:
+        nomes_disponiveis = df_completo['Nome'].unique()
+        sel_nome = st.selectbox(f"Selecione o {tipo_label}:", nomes_disponiveis, key=f"sel_{tipo_label}")
+        
+        # Pega a avaliação mais recente ou média desse item
+        df_item = df_completo[df_completo['Nome'] == sel_nome]
+        media_item = df_item['Score Final'].mean()
+        cat_item = df_item['Categoria'].iloc[0]
+        
+        st.markdown(f"""
+        <div style="background-color: {COLOR_CARD_BG}; padding: 15px; border-radius: 5px; color: black;">
+            <h3 style="color: black !important; margin:0;">{sel_nome}</h3>
+            <p style="color: black !important;"><b>Categoria:</b> {cat_item}</p>
+            <h1 style="color: {COLOR_PRIMARY} !important;">{media_item:.2f}</h1>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with c_rad:
+        # Radar individual vs Média da Categoria
+        vals_item = df_item[criterios].mean().tolist()
+        vals_item += [vals_item[0]]
+        
+        df_cat = df_completo[df_completo['Categoria'] == cat_item]
+        vals_cat = df_cat[criterios].mean().tolist()
+        vals_cat += [vals_cat[0]]
+        
+        fig_r = go.Figure()
+        fig_r.add_trace(go.Scatterpolar(r=vals_item, theta=criterios + [criterios[0]], fill='toself', name=sel_nome))
+        fig_r.add_trace(go.Scatterpolar(r=vals_cat, theta=criterios + [criterios[0]], name=f'Média {cat_item}', line=dict(dash='dot')))
+        fig_r.update_layout(polar=dict(radialaxis=dict(range=[0, 5])), paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
+        st.plotly_chart(fig_r, use_container_width=True)
+
+    # --- EVOLUÇÃO ---
+    st.subheader("📈 Evolução Histórica")
+    df_hist = df_aval[df_aval['Nome'] == sel_nome].copy()
+    if len(df_hist) > 0:
+        # Cria timeline ordenável
+        periodos_ordem = manager.get_periodos()
+        map_p = {p: i for i, p in enumerate(periodos_ordem)}
+        df_hist['sort_idx'] = df_hist['Periodo'].map(map_p)
+        df_hist = df_hist.sort_values(['Ano', 'sort_idx'])
+        df_hist['Timeline'] = df_hist['Periodo'] + "/" + df_hist['Ano'].astype(str)
+        
+        fig_line = px.line(df_hist, x='Timeline', y='Score Final', markers=True, title=f"Histórico de Notas - {sel_nome}")
+        fig_line.update_layout(yaxis=dict(range=[0, 10]), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
+        fig_line.update_traces(line_color='#00FF00', line_width=3)
+        st.plotly_chart(fig_line, use_container_width=True)
+    else:
+        st.info("Sem histórico suficiente para gerar gráfico de evolução.")
 
 # ==============================================================================
 # 5. APLICAÇÃO PRINCIPAL
@@ -267,7 +323,7 @@ if opcao == "Fornecedores":
     tab_dash, tab_cad = st.tabs(["📊 Dashboard", "➕ Cadastrar Fornecedor"])
     
     with tab_dash:
-        plot_dashboard(manager.df_aval_forn, manager.df_fornecedores, list(manager.config['pesos_fornecedores'].keys()), "Fornecedores")
+        plot_dashboard(manager.df_aval_forn, manager.df_fornecedores, list(manager.config['pesos_fornecedores'].keys()), "Fornecedores", manager)
         
     with tab_cad:
         with st.form("cad_forn"):
@@ -291,7 +347,7 @@ elif opcao == "Produtos":
     tab_dash, tab_cad = st.tabs(["📊 Dashboard", "➕ Cadastrar Produto"])
     
     with tab_dash:
-        plot_dashboard(manager.df_aval_prod, manager.df_produtos, list(manager.config['pesos_produtos'].keys()), "Produtos")
+        plot_dashboard(manager.df_aval_prod, manager.df_produtos, list(manager.config['pesos_produtos'].keys()), "Produtos", manager)
         
     with tab_cad:
         with st.form("cad_prod"):
@@ -372,20 +428,51 @@ elif opcao == "Relatórios":
     tipo_rep = st.radio("Tipo:", ["Fornecedor", "Produto"], horizontal=True)
     df_dados = manager.df_aval_forn if tipo_rep == "Fornecedor" else manager.df_aval_prod
     
-    c1, c2 = st.columns(2)
-    sel_nome = c1.selectbox("Nome", df_dados['Nome'].unique() if not df_dados.empty else [])
-    sel_ano = c2.selectbox("Ano", sorted(manager.config['anos_disponiveis']))
-    
-    if st.button("Gerar Visualização"):
-        filtrado = df_dados[(df_dados['Nome'] == sel_nome) & (df_dados['Ano'] == sel_ano)]
-        st.dataframe(filtrado, use_container_width=True)
+    if df_dados.empty:
+        st.warning("Sem dados.")
+    else:
+        c1, c2 = st.columns(2)
+        sel_nome = c1.selectbox("Nome", df_dados['Nome'].unique())
+        sel_ano = c2.selectbox("Ano", sorted(manager.config['anos_disponiveis']))
+        
+        if st.button("Gerar Visualização"):
+            filtrado = df_dados[(df_dados['Nome'] == sel_nome) & (df_dados['Ano'] == sel_ano)]
+            st.dataframe(filtrado, use_container_width=True)
 
-# --- 5. BASE DE DADOS ---
+# --- 5. BASE DE DADOS (IMPORT VOLTOU) ---
 elif opcao == "Base de Dados":
     st.title("📂 Dados Brutos")
     
     if st.button("☁️ Forçar Salvamento na Nuvem"):
         if manager.save_all(): st.toast("Salvo!", icon="☁️")
+
+    # --- ÁREA DE IMPORTAÇÃO RESTAURADA ---
+    st.markdown("---")
+    with st.expander("📤 Importar CSV (Migração)", expanded=False):
+        st.warning("Cuidado: Dados duplicados não são tratados automaticamente.")
+        destino = st.radio("Para onde vão os dados?", 
+                           ["Fornecedores", "Avaliações Fornecedores", "Produtos", "Avaliações Produtos"], horizontal=True)
+        up_file = st.file_uploader("Arquivo CSV", type=['csv'])
+        
+        if up_file:
+            try:
+                df_new = pd.read_csv(up_file)
+                st.write("Preview:", df_new.head(3))
+                if st.button("Confirmar Importação"):
+                    if destino == "Fornecedores":
+                        manager.df_fornecedores = pd.concat([manager.df_fornecedores, df_new], ignore_index=True)
+                    elif destino == "Avaliações Fornecedores":
+                        manager.df_aval_forn = pd.concat([manager.df_aval_forn, df_new], ignore_index=True)
+                    elif destino == "Produtos":
+                        manager.df_produtos = pd.concat([manager.df_produtos, df_new], ignore_index=True)
+                    elif destino == "Avaliações Produtos":
+                        manager.df_aval_prod = pd.concat([manager.df_aval_prod, df_new], ignore_index=True)
+                    manager.save_all()
+                    st.success("Importado com sucesso!")
+            except Exception as e:
+                st.error(f"Erro: {e}")
+    st.markdown("---")
+    # ----------------------------------------
 
     t1, t2, t3, t4 = st.tabs(["Fornecedores", "Aval. Fornecedores", "Produtos", "Aval. Produtos"])
     
@@ -398,19 +485,23 @@ elif opcao == "Base de Dados":
     with t4:
         manager.df_aval_prod = st.data_editor(manager.df_aval_prod, num_rows="dynamic", use_container_width=True)
 
-# --- 6. CONFIGURAÇÕES ---
+# --- 6. CONFIGURAÇÕES (CORRIGIDO DUPLICATE KEY) ---
 elif opcao == "Configurações":
     st.title("⚙️ Configurações do Sistema")
     
     t1, t2, t3 = st.tabs(["Pesos Fornecedores", "Pesos Produtos", "Geral"])
     
-    def render_weights_form(key_config, label_btn):
+    # Função corrigida com parâmetro 'key_suffix' para evitar DuplicateElementId
+    def render_weights_form(key_config, label_btn, key_suffix):
         nw_pesos = {}
         cols = st.columns(3)
-        for i, (k, v) in enumerate(manager.config[key_config].items()):
-            nw_pesos[k] = cols[i%3].number_input(k, 0.0, 5.0, float(v), 0.5)
+        dict_pesos = manager.config.get(key_config, DEFAULT_CONFIG[key_config])
         
-        if st.button(label_btn):
+        for i, (k, v) in enumerate(dict_pesos.items()):
+            # AQUI ESTÁ A CORREÇÃO: key=f"{key_suffix}_{k}"
+            nw_pesos[k] = cols[i%3].number_input(k, 0.0, 5.0, float(v), 0.5, key=f"{key_suffix}_{k}")
+        
+        if st.button(label_btn, key=f"btn_{key_suffix}"):
             manager.config[key_config] = nw_pesos
             manager.recalcular_tudo()
             manager.save_all()
@@ -420,17 +511,16 @@ elif opcao == "Configurações":
 
     with t1:
         st.subheader("Critérios de Avaliação de Fornecedores")
-        render_weights_form('pesos_fornecedores', "Salvar Pesos Fornecedores")
+        render_weights_form('pesos_fornecedores', "Salvar Pesos Fornecedores", "forn")
         
     with t2:
         st.subheader("Critérios de Avaliação de Produtos")
-        render_weights_form('pesos_produtos', "Salvar Pesos Produtos")
+        render_weights_form('pesos_produtos', "Salvar Pesos Produtos", "prod")
         
     with t3:
-        st.info("Configurações de Ano e Período")
-        # (Código simplificado para brevidade, mantendo lógica original)
+        st.info("Configurações Gerais")
         atual = manager.config['tipo_periodo']
-        novo = st.radio("Frequência", ["Trimestral", "Mensal"], index=0 if atual == "Trimestral" else 1)
+        novo = st.radio("Frequência de Avaliação", ["Trimestral", "Mensal"], index=0 if atual == "Trimestral" else 1)
         if novo != atual:
             manager.config['tipo_periodo'] = novo
             manager.save_all()
