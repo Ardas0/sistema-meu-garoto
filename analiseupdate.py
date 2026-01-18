@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import json
 import numpy as np
 import time
-import copy # Importante para a fusão inteligente de configurações
+import copy 
 from streamlit_option_menu import option_menu
 from streamlit_gsheets import GSheetsConnection
 
@@ -21,7 +21,11 @@ COLOR_SIDEBAR = "#8FBC8F"       # Sidebar
 COLOR_TEXT_WHITE = "#FFFFFF"
 COLOR_TEXT_BLACK = "#000000"
 COLOR_CARD_BG = "#FFFAFA"
-COLOR_DANGER = "#B22222"
+COLOR_DANGER = "#B22222"        # Vermelho Crítico
+COLOR_WARN = "#FF4500"          # Laranja/Vermelho (Ruim)
+COLOR_ATTENTION = "#FFD700"     # Amarelo (Atenção)
+COLOR_GOOD = "#228B22"          # Verde (Bom)
+COLOR_EXCELLENT = "#006400"     # Verde Escuro (Excelente)
 COLOR_HIGHLIGHT = "#006400"
 
 # Configuração Base
@@ -32,7 +36,7 @@ DEFAULT_CONFIG = {
         'Preço': 1.0, 'Pagamento': 1.0, 'Suporte': 1.0, 'Comunicação': 1.0
     },
     'pesos_produtos': {
-        'Rentabilidade': 1.0, # <--- NOVO CRITÉRIO ADICIONADO
+        'Rentabilidade': 1.0, 
         'Qualidade Material': 1.0, 'Custo-Benefício': 1.0,
         'Durabilidade': 1.0, 'Acabamento': 1.0, 'Disponibilidade': 1.0,
         'Inovação': 1.0, 'Embalagem': 1.0, 'Sustentabilidade': 1.0
@@ -40,6 +44,70 @@ DEFAULT_CONFIG = {
     'tipo_periodo': 'Trimestral',
     'anos_disponiveis': [2024, 2025, 2026],
     'autosave': True
+}
+
+# --- NOVO: GUIA DE REFERÊNCIA BASEADO NAS IMAGENS ---
+GUIA_CRITERIOS = {
+    "Pontualidade": {
+        "5.0": "Atrasos frequentes (ou atraso 'médio' que atrapalha produção), precisa cobrar.",
+        "6.0": "Atrasos acontecem, mas são pontuais e com aviso; impacto controlável.",
+        "8.0": "Entrega no prazo quase sempre; comunicação proativa.",
+        "10.0": "Entrega perfeita e previsível; antecipa riscos."
+    },
+    "Conformidade Técnica": {
+        "5.0": "Produto/insumo frequentemente fora de especificação; precisa retrabalho/triagem.",
+        "6.0": "Pequenas variações, mas dentro do tolerável; ajustes ocasionais.",
+        "8.0": "Atende especificação com consistência.",
+        "10.0": "Padrão impecável + documentação/controle excelente."
+    },
+    "Comunicação": {
+        "5.0": "Demora para responder; resolução lenta; você corre atrás.",
+        "6.0": "Responde, mas às vezes com atraso; resolve com alguma insistência.",
+        "8.0": "Responde rápido, resolve sem fricção.",
+        "10.0": "Acompanha, antecipa, resolve antes de virar problema."
+    },
+    "Suporte": { # Reaproveitando lógica de Comunicação se não houver específico
+        "5.0": "Demora para responder; resolução lenta.",
+        "6.0": "Responde, mas às vezes com atraso.",
+        "8.0": "Suporte rápido e eficiente.",
+        "10.0": "Suporte proativo, resolve antes de virar problema."
+    },
+    "Preço": {
+        "5.0": "Preço instável ou 'barato que sai caro' (problema gera custo total).",
+        "6.0": "Preço ok, mas negociação limitada; condições medianas.",
+        "8.0": "Boa relação custo-benefício + condição coerente.",
+        "10.0": "Excelente custo total + flexibilidade."
+    },
+    "Pagamento": { # Reaproveitando lógica de Preço/Flexibilidade
+        "5.0": "Condições rígidas ou ruins para o fluxo de caixa.",
+        "6.0": "Condições medianas/padrão de mercado.",
+        "8.0": "Boas condições, ajuda no fluxo.",
+        "10.0": "Flexibilidade total e parceria financeira."
+    },
+    "Qualidade Material": {
+        "5.0": "Falhas visíveis, padrão inconsistente, risco de devolução/reclamação.",
+        "6.0": "Padrão aceitável, mas variação de lote aparece.",
+        "8.0": "Consistente, poucos problemas.",
+        "10.0": "Padrão premium, praticamente zero não conformidade."
+    },
+    "Acabamento": { # Similar a Qualidade Material
+        "5.0": "Falhas visíveis, padrão inconsistente.",
+        "6.0": "Aceitável, mas com pequenas variações.",
+        "8.0": "Consistente e bem acabado.",
+        "10.0": "Acabamento premium/perfeito."
+    },
+    "Rentabilidade": {
+        "5.0": "Margem baixa, giro ruim, 'come' esforço e caixa.",
+        "6.0": "Margem ok, mas precisa ajustes (preço, canal, custo).",
+        "8.0": "Margem boa e giro saudável.",
+        "10.0": "Produto estrela (alta margem + alto giro + baixa perda)."
+    },
+    "Disponibilidade": {
+        "5.0": "Falta com frequência; quebra venda.",
+        "6.0": "Algumas rupturas, mas recupera rápido.",
+        "8.0": "Disponibilidade alta e previsível.",
+        "10.0": "Zero ruptura e planejamento perfeito."
+    }
 }
 
 CATEGORIAS_FORN = ["Matéria Prima", "Embalagens", "Logística", "Manutenção", "Serviços", "Outros"]
@@ -142,7 +210,7 @@ class DataManager:
                 json_str = df.iloc[0]['JSON_DUMP']
                 loaded = json.loads(json_str)
                 
-                # FUSÃO INTELIGENTE: Começa com o padrão (que tem Rentabilidade)
+                # FUSÃO INTELIGENTE: Começa com o padrão
                 config = copy.deepcopy(DEFAULT_CONFIG)
                 
                 # Atualiza campos simples
@@ -275,13 +343,45 @@ def plot_dashboard(df_aval, df_cad, criterios, tipo_label, manager):
             </div>
             """, unsafe_allow_html=True)
             
-            st.markdown("#### Status:")
-            if media_item >= 7.5:
-                st.success("✅ **APROVADO / EXCELENTE**")
-            elif media_item >= 6.0:
-                st.warning("⚠️ **EM OBSERVAÇÃO**")
+            # --- MODIFICAÇÃO DE LÓGICA DE DIAGNÓSTICO ---
+            st.markdown("#### Diagnóstico e Ação Sugerida:")
+            
+            if media_item < 3.0:
+                texto_status = "CRÍTICO / TOTALMENTE INSATISFATÓRIO"
+                texto_acao = "🚨 AÇÃO RECOMENDADA: ABANDONO OU SUBSTITUIÇÃO IMEDIATA"
+                cor_box = COLOR_DANGER
+                icone = "🚫"
+            elif media_item < 5.0:
+                texto_status = "RUIM / MUITOS PROBLEMAS"
+                texto_acao = "🛑 AÇÃO RECOMENDADA: REVER CONTRATO (Risco Alto)"
+                cor_box = COLOR_WARN
+                icone = "👎"
+            elif media_item < 7.0:
+                texto_status = "REGULAR / ABAIXO DA META"
+                texto_acao = "⚠️ AÇÃO RECOMENDADA: FICAR EM OBSERVAÇÃO"
+                cor_box = COLOR_ATTENTION
+                icone = "👀"
+            elif media_item < 9.0:
+                texto_status = "BOM / DENTRO DA META"
+                texto_acao = "✅ AÇÃO RECOMENDADA: MANTER RELACIONAMENTO"
+                cor_box = COLOR_GOOD
+                icone = "👍"
             else:
-                st.error("🚨 **RISCO / REVER CONTRATO**")
+                texto_status = "EXCELENTE / REFERÊNCIA"
+                texto_acao = "🌟 AÇÃO RECOMENDADA: FORTALECER PARCERIA"
+                cor_box = COLOR_EXCELLENT
+                icone = "🏆"
+
+            st.markdown(f"""
+            <div style="background-color: {cor_box}; color: white; padding: 15px; border-radius: 8px; margin-top: 10px;">
+                <div style="font-size: 14px; font-weight: bold; opacity: 0.9;">STATUS ATUAL:</div>
+                <div style="font-size: 20px; font-weight: bold; margin-bottom: 8px;">{icone} {texto_status}</div>
+                <hr style="margin: 5px 0; border-color: rgba(255,255,255,0.3);">
+                <div style="font-size: 12px; font-weight: bold; text-transform: uppercase; margin-top: 5px;">Decisão do Sistema:</div>
+                <div style="font-size: 16px; font-weight: bold;">{texto_acao}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            # ---------------------------------------------
             
         else:
             st.error("Erro ao carregar dados.")
@@ -432,6 +532,19 @@ elif opcao == "Avaliação Unificada":
             for k in criterios.keys():
                 try: defaults[k] = float(existente.iloc[0][k])
                 except: pass
+
+        # --- GUIA DE REFERÊNCIA NA INTERFACE ---
+        with st.expander("📖 Guia de Referência (Critérios)", expanded=False):
+            st.markdown("Use este guia para padronizar as notas:")
+            cols_guia = st.columns(3)
+            for i, (crit_nome, descricoes) in enumerate(GUIA_CRITERIOS.items()):
+                # Só exibe se o critério estiver na configuração atual
+                if crit_nome in criterios:
+                    with cols_guia[i % 3]:
+                        st.markdown(f"**{crit_nome}**")
+                        for nota_ref, texto in descricoes.items():
+                            st.markdown(f"- **{nota_ref}**: {texto}")
+                        st.markdown("---")
 
         with st.form("form_aval_unificada"):
             cols = st.columns(2)
